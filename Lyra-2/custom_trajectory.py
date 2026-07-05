@@ -10,11 +10,11 @@ N = 481
 fps = 16
 
 # Three motion phases, matching captions.json:
-#   0-48:   ~3s forward and slightly downward.
-#   48-64:  ~1s settle from a slight downward angle into a level view.
-#   64-480: slow right turn toward the hidden wall and door.
-forward_end = 48
-level_end = 64
+#   0-16:   ~1s forward and slightly downward.
+#   16-32:  ~1s settle into a level forward-facing view.
+#   32-480: slow right turn toward the hidden wall and door.
+forward_end = 16
+level_end = 32
 
 # Intrinsics similar to existing examples: ~77 degree horizontal FOV
 fx = fy = 805.0
