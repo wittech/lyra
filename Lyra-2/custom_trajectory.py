@@ -9,12 +9,10 @@ W, H = 1280, 720
 N = 481
 fps = 16
 
-# Three motion phases, matching captions.json:
-#   0-16:   ~1s forward and slightly downward.
-#   16-32:  ~1s settle into a level forward-facing view.
-#   32-480: slow right turn toward the hidden wall and door.
-forward_end = 16
-level_end = 32
+# Two motion phases, matching captions.json:
+#   0-80:   ~5s rotate right while slowly pulling backward.
+#   80-480: continue rotating right until facing the hidden wall and door.
+turn_pull_end = 80
 
 # Intrinsics similar to existing examples: ~77 degree horizontal FOV
 fx = fy = 805.0
@@ -51,28 +49,27 @@ def c2w_from_pose(C, yaw, pitch=0.0):
 
 w2c = np.zeros((N, 4, 4), dtype=np.float32)
 
-# Tune these two if motion feels too strong/weak.
-forward_dist = 1.2
-down_dist = 0.35
-yaw_right_deg = 90.0
-max_down_pitch_deg = -6.0
+# Tune these if motion feels too strong/weak.
+pull_back_dist = 0.9
+first_yaw_right_deg = 35.0
+final_yaw_right_deg = 92.0
+right_drift = 0.15
 
 for i in range(N):
-    if i <= forward_end:
-        u = ease(i / forward_end)
-        C = np.array([0.0, down_dist * u, forward_dist * u], dtype=np.float32)
-        pitch = np.deg2rad(max_down_pitch_deg) * u
-        yaw = 0.0
-    elif i <= level_end:
-        u = ease((i - forward_end) / (level_end - forward_end))
-        C = np.array([0.0, down_dist, forward_dist], dtype=np.float32)
-        pitch = np.deg2rad(max_down_pitch_deg) * (1.0 - u)
-        yaw = 0.0
-    else:
-        u = ease((i - level_end) / (N - level_end - 1))
-        C = np.array([0.0, down_dist, forward_dist], dtype=np.float32)
+    if i <= turn_pull_end:
+        u = ease(i / turn_pull_end)
+        C = np.array([right_drift * 0.35 * u, 0.0, -pull_back_dist * u], dtype=np.float32)
         pitch = 0.0
-        yaw = np.deg2rad(yaw_right_deg) * u
+        yaw = np.deg2rad(first_yaw_right_deg) * u
+    else:
+        u = ease((i - turn_pull_end) / (N - turn_pull_end - 1))
+        C = np.array([
+            right_drift * (0.35 + 0.65 * u),
+            0.0,
+            -pull_back_dist,
+        ], dtype=np.float32)
+        pitch = 0.0
+        yaw = np.deg2rad(first_yaw_right_deg + (final_yaw_right_deg - first_yaw_right_deg) * u)
 
     c2w = c2w_from_pose(C, yaw, pitch)
     w2c[i] = np.linalg.inv(c2w).astype(np.float32)
@@ -86,5 +83,5 @@ np.savez(
 )
 
 print(f"Wrote {out / 'trajectory.npz'}")
-print(f"N={N}, fps={fps}, forward_end={forward_end}, level_end={level_end}")
-print(f"Use captions at frames: 0, {forward_end}, {level_end}")
+print(f"N={N}, fps={fps}, turn_pull_end={turn_pull_end}")
+print(f"Use captions at frames: 0, {turn_pull_end}")
