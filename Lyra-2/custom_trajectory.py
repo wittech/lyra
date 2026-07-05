@@ -6,13 +6,13 @@ out = BASE_DIR / "assets/custom_trajectory_examples/example_2"
 out.mkdir(parents=True, exist_ok=True)
 
 W, H = 1280, 720
-N = 321
+N = 481
 fps = 16
 
 # Three motion phases, matching captions.json:
 #   0-48:   ~3s forward and slightly downward.
 #   48-64:  ~1s settle from a slight downward angle into a level view.
-#   64-320: slow right turn toward the hidden wall and door.
+#   64-480: slow right turn toward the hidden wall and door.
 forward_end = 48
 level_end = 64
 
