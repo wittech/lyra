@@ -9,10 +9,14 @@ W, H = 1280, 720
 N = 481
 fps = 16
 
-# Two motion phases, matching captions.json:
-#   0-80:   ~5s rotate right while slowly pulling backward.
-#   80-480: continue rotating right until facing the hidden wall and door.
-turn_pull_end = 80
+# AR-aligned caption phases, matching captions.json:
+#   0:   start from the original view.
+#   81:  after ~5s, finish the initial right turn and backward pull.
+#   161: face the hidden wall with the old wooden door near the desk.
+#   241: continue across the opposite side of the room.
+#   321: continue the 360-degree scan back toward the original side.
+#   401: final AR block, returning close to the starting view by frame 480.
+caption_frames = [0, 81, 161, 241, 321, 401]
 
 # Intrinsics similar to existing examples: ~77 degree horizontal FOV
 fx = fy = 805.0
@@ -49,27 +53,26 @@ def c2w_from_pose(C, yaw, pitch=0.0):
 
 w2c = np.zeros((N, 4, 4), dtype=np.float32)
 
-# Tune these if motion feels too strong/weak.
-pull_back_dist = 0.9
-first_yaw_right_deg = 35.0
-final_yaw_right_deg = 92.0
-right_drift = 0.15
+# Tune these keyframes if motion feels too strong/weak. Frame 480 is the last
+# real frame for N=481; key 401 is the start of the last AR block.
+pose_keyframes = [
+    (0, 0.0, np.array([0.0, 0.0, 0.0], dtype=np.float32)),
+    (81, 35.0, np.array([0.05, 0.0, -0.90], dtype=np.float32)),
+    (161, 105.0, np.array([0.09, 0.0, -0.90], dtype=np.float32)),
+    (241, 170.0, np.array([0.12, 0.0, -0.80], dtype=np.float32)),
+    (321, 240.0, np.array([0.10, 0.0, -0.70], dtype=np.float32)),
+    (401, 310.0, np.array([0.04, 0.0, -0.35], dtype=np.float32)),
+    (480, 360.0, np.array([0.0, 0.0, 0.0], dtype=np.float32)),
+]
 
 for i in range(N):
-    if i <= turn_pull_end:
-        u = ease(i / turn_pull_end)
-        C = np.array([right_drift * 0.35 * u, 0.0, -pull_back_dist * u], dtype=np.float32)
-        pitch = 0.0
-        yaw = np.deg2rad(first_yaw_right_deg) * u
-    else:
-        u = ease((i - turn_pull_end) / (N - turn_pull_end - 1))
-        C = np.array([
-            right_drift * (0.35 + 0.65 * u),
-            0.0,
-            -pull_back_dist,
-        ], dtype=np.float32)
-        pitch = 0.0
-        yaw = np.deg2rad(first_yaw_right_deg + (final_yaw_right_deg - first_yaw_right_deg) * u)
+    for (f0, yaw0, c0), (f1, yaw1, c1) in zip(pose_keyframes[:-1], pose_keyframes[1:]):
+        if f0 <= i <= f1:
+            u = ease((i - f0) / (f1 - f0))
+            C = (1.0 - u) * c0 + u * c1
+            yaw = np.deg2rad(yaw0 + (yaw1 - yaw0) * u)
+            break
+    pitch = 0.0
 
     c2w = c2w_from_pose(C, yaw, pitch)
     w2c[i] = np.linalg.inv(c2w).astype(np.float32)
@@ -83,5 +86,5 @@ np.savez(
 )
 
 print(f"Wrote {out / 'trajectory.npz'}")
-print(f"N={N}, fps={fps}, turn_pull_end={turn_pull_end}")
-print(f"Use captions at frames: 0, {turn_pull_end}")
+print(f"N={N}, fps={fps}, caption_frames={caption_frames}")
+print("Pose keyframes:", [frame for frame, _, _ in pose_keyframes])
