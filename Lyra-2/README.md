@@ -32,11 +32,10 @@ NVIDIA <br>
 
 
 ## News
+- 🚀 [July 15, 2026] GUI and training code are now available! See the [GUI instructions](gui/README.md) and [training instructions](TRAINING.md).
 - 🔒 [May 8, 2026] Lyra 2.0 is temporarily anonymized. Please Google for arxiv and citation.
-- 🚀 [April 15, 2026] Paper, model weights, and inference code are now publicly available!
 - 🚀 [April 17, 2026] 4-step DMD distillation LoRA is now available! See [Fast Inference with DMD Distillation](#fast-inference-with-dmd-distillation) for details.
-- 🔜 [Coming Soon] GUI for interactive scene generation.
-- ⏳ [Planned] Training code and data processing scripts.
+- 🚀 [April 15, 2026] Paper, model weights, and inference code are now publicly available!
 
 ## Installation
 
@@ -132,9 +131,12 @@ Output: `outputs/custom_traj/<image_name>.mp4`
 <td><video src="https://github.com/user-attachments/assets/61cfe2f0-b0bf-4077-8367-49968aca7a19" autoplay controls loop muted playsinline preload="auto" width="360"></video></td>
 </tr></table>
 
-#### Option 3: Interactive GUI (Coming Soon!)
+#### Option 3: Interactive GUI
 
-We will release our interactive GUI, an online captioning pipeline, and an instruction video in an upcoming update. Stay tuned!
+Our interactive GUI supports camera-path authoring in a 3D viewer, autoregressive video
+extension, and text prompts for specifying the content to generate, as demonstrated in the
+demos on our website.
+See **[gui/README.md](gui/README.md)** for instructions.
 
 <video src="https://github.com/user-attachments/assets/76394f4d-b6c7-46f2-8133-5eabf5fd74e1" autoplay controls loop muted playsinline preload="auto" width="360"></video>
 
@@ -160,11 +162,31 @@ PYTHONPATH=. python -m lyra_2._src.inference.vipe_da3_gs_recon \
   --input_video_path outputs/zoomgs/videos/<sample_id>.mp4
 ```
 
-Output is written next to the input video as `<sample_id>_gs_ours/`:
+For long videos (for example, more than 500 frames), reconstructing all frames in a single
+DA3 pass may produce blurry results because the DA3 Gaussian head was not fine-tuned at such
+sequence lengths. For best quality, reconstruct the video as multiple overlapping chunks. Set
+`--num_chunks` to 2 or greater:
+
+```bash
+PYTHONPATH=. python -m lyra_2._src.inference.vipe_da3_chunked_gs_recon \
+  --input_video_path <video_path> \
+  --num_chunks 2 \
+  --chunk_size 128 \
+  --chunk_overlap 10
+```
+
+The single-pass command writes `<sample_id>_gs_ours/`, while the chunked command writes
+`<sample_id>_gs_chunked/`. Both output directories contain:
 - `reconstructed_scene.ply` — Gaussian point cloud
 - `gs_trajectory.mp4` — rendered flythrough video
 
 **Runtime on 1× H100 80GB:** ~1 min (VIPE + DA3 depth + GS render).
+
+
+## Training
+
+See **[TRAINING.md](TRAINING.md)** for pretrained weights, dataset format, and a runnable example
+using the included sample data.
 
 
 ## Acknowledgement

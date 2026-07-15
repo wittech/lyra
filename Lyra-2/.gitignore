@@ -83,6 +83,7 @@ eval_results
 tmp/
 temp/
 *.mp4
+/assets/training_data/
 
 # Assets
 
@@ -104,3 +105,6 @@ results/
 .checkpoint_keep
 attn_mask_vis/
 attn_mask_vis_*
+
+# GUI runtime state
+/gui/imgui.ini

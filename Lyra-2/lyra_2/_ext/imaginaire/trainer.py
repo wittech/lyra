@@ -68,6 +68,9 @@ class ImaginaireTrainer:
         """
         super().__init__()
         self.config = config
+        self.checkpoint_saving_enabled = os.environ.get("LYRA2_DISABLE_CHECKPOINT_SAVE", "0") != "1"
+        if not self.checkpoint_saving_enabled:
+            log.warning("Checkpoint saving is disabled by LYRA2_DISABLE_CHECKPOINT_SAVE=1 (smoke-test mode only).")
         # Set up the distributed computing environment.
         with distributed_init():
             distributed.init()
@@ -240,9 +243,12 @@ class ImaginaireTrainer:
                         # CUDA OOM error - save checkpoint and exit gracefully
                         _oom_triggered = True
                         log.error(f"CUDA Out of Memory error caught: {e}")
-                        log.info("Saving checkpoint due to CUDA OOM error...")
-                        self.checkpointer.save(model, optimizer, scheduler, grad_scaler, iteration=iteration)
-                        log.success("Checkpoint saved successfully. Exiting training gracefully due to OOM.")
+                        if self.checkpoint_saving_enabled:
+                            log.info("Saving checkpoint due to CUDA OOM error...")
+                            self.checkpointer.save(model, optimizer, scheduler, grad_scaler, iteration=iteration)
+                            log.success("Checkpoint saved successfully. Exiting training gracefully due to OOM.")
+                        else:
+                            log.warning("Checkpoint saving is disabled; exiting without an OOM checkpoint.")
                         _end_training = True
                         break
                     self.callbacks.on_training_step_batch_end(
@@ -254,7 +260,7 @@ class ImaginaireTrainer:
                     # Do the following when an actual optimizer (update) step has been made.
                     iteration += 1
                     # Save checkpoint.
-                    if iteration % self.config.checkpoint.save_iter == 0:
+                    if self.checkpoint_saving_enabled and iteration % self.config.checkpoint.save_iter == 0:
                         self.checkpointer.save(model, optimizer, scheduler, grad_scaler, iteration=iteration)
                     # Call on_training_step_end with SmartStop exception handling
                     try:
@@ -263,9 +269,12 @@ class ImaginaireTrainer:
                         # Smart stop triggered - save checkpoint and exit gracefully
                         _smart_stop_triggered = True
                         log.warning(f"SmartStop exception caught: {e}")
-                        log.info("Saving checkpoint due to time limit...")
-                        self.checkpointer.save(model, optimizer, scheduler, grad_scaler, iteration=iteration)
-                        log.success("Checkpoint saved successfully. Exiting training gracefully.")
+                        if self.checkpoint_saving_enabled:
+                            log.info("Saving checkpoint due to time limit...")
+                            self.checkpointer.save(model, optimizer, scheduler, grad_scaler, iteration=iteration)
+                            log.success("Checkpoint saved successfully. Exiting training gracefully.")
+                        else:
+                            log.warning("Checkpoint saving is disabled; exiting without a timeout checkpoint.")
                         _end_training = True
                         break
                     # Validation.
@@ -281,7 +290,12 @@ class ImaginaireTrainer:
                 if _end_training:
                     break
         log.success("Done with training.")
-        if iteration % self.config.checkpoint.save_iter != 0 and not _smart_stop_triggered and not _oom_triggered:
+        if (
+            self.checkpoint_saving_enabled
+            and iteration % self.config.checkpoint.save_iter != 0
+            and not _smart_stop_triggered
+            and not _oom_triggered
+        ):
             self.checkpointer.save(model, optimizer, scheduler, grad_scaler, iteration=iteration)
         self.callbacks.on_train_end(model, iteration=iteration)
         self.checkpointer.finalize()

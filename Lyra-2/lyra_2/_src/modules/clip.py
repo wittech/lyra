@@ -495,11 +495,12 @@ class CLIPModel:
         self,
         dtype=torch.float16,
         device="cuda",
-        checkpoint_path="./checkpoints/image_encoder/model.pth",
+        checkpoint_path=None,
         tokenizer_path="xlm-roberta-large",
     ):
         self.dtype = dtype
         self.device = device
+        checkpoint_path = checkpoint_path or "./checkpoints/image_encoder/model.pth"
         self.checkpoint_path = checkpoint_path
         self.tokenizer_path = tokenizer_path
 
@@ -525,5 +526,3 @@ class CLIPModel:
         with torch.amp.autocast("cuda", dtype=self.dtype):
             out = self.model.visual(videos, use_31_block=True)
             return out
-
-
