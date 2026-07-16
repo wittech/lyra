@@ -98,7 +98,7 @@ class Lyra2PersistentModel:
 			num_sampling_step=int(os.environ.get("LYRA_GUI_SAMPLING_STEPS", 35)),
 			seed=int(os.environ.get("LYRA_GUI_SEED", 1)),
 			offload=offload,
-			offload_vae=offload and _env_bool("LYRA_GUI_OFFLOAD_VAE", True),
+			offload_vae=offload and _env_bool("LYRA_GUI_OFFLOAD_VAE", False),
 			vae_decode_device=os.environ.get(
 				"LYRA_GUI_VAE_DECODE_DEVICE",
 				"cuda:0",

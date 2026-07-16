@@ -119,7 +119,7 @@ Set these variables before starting the server when you need to override a defau
 |---|---:|---|
 | `LYRA_GUI_OUTPUT_DIR` | `outputs/gui_sessions` | Server-side session videos |
 | `LYRA_GUI_OFFLOAD` | `1` | Offload inactive diffusion weights to reduce GPU memory use |
-| `LYRA_GUI_OFFLOAD_VAE` | `1` | Keep the VAE on CPU while it is idle |
+| `LYRA_GUI_OFFLOAD_VAE` | `0` | Keep the VAE on CPU while it is idle |
 | `LYRA_GUI_RETRIEVAL_VIEWS` | `1` | Spatial-memory views retrieved per autoregressive step |
 | `LYRA_GUI_USE_DMD` | `0` | Enable the optional four-step DMD LoRA |
 | `LYRA_GUI_GUIDANCE` | `5.0` | Classifier-free guidance scale without DMD |
