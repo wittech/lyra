@@ -1,6 +1,9 @@
 <p align="center">
 <h1 align="center">Project Lyra: Open Generative 3D World Models</h1>
-<h3 align="center">NVIDIA Spatial Intelligence Lab</h3>
+<p align="center">NVIDIA Spatial Intelligence Lab</p>
+<p align="center">
+  <img src="https://img.shields.io/badge/ICLR-2026-2E8B57?style=flat-square">
+  <img src="https://img.shields.io/badge/SIGGRAPH_Asia-2026-2E8B57?style=flat-square">
 </p>
 
 https://github.com/user-attachments/assets/f47c24c0-453e-4134-84f1-80c56613f4af
