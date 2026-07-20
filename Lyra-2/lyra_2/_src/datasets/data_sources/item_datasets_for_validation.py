@@ -14,7 +14,7 @@
 # limitations under the License.
 
 import dataclasses
-import os
+from pathlib import Path
 
 
 @dataclasses.dataclass
@@ -27,11 +27,11 @@ def get_itemdataset_option_local(name: str) -> ItemDatasetConfig:
     return ITEMDATASET_OPTIONS_LOCAL[name]
 
 
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 
 ITEMDATASET_OPTIONS_LOCAL = {
     "empty_string_umt5": ItemDatasetConfig(
-        path=os.path.join(_REPO_ROOT, "checkpoints", "empty_string_umt5.pt"),
+        path=str(_REPO_ROOT / "checkpoints" / "text_encoder" / "negative_prompt.pt"),
         length=1,
     ),
 }

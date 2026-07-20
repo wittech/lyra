@@ -23,10 +23,7 @@ import torch
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 
-try:
-    from lyra_2._src.datasets.base import DataField
-except ImportError:
-    pass
+from lyra_2._src.datasets.data_field import DataField
 from lyra_2._ext.imaginaire.utils import log
 from lyra_2._ext.imaginaire.lazy_config import LazyCall as L, instantiate
 from lyra_2._src.datasets.config_dataverse import DATAVERSE_CONFIG
@@ -127,6 +124,8 @@ class IterativeGEN3CDataLoader:
                 continue
             self.dataset_name_list.append(dataset_name)
             self.dataloader_list.append(instantiate(dataloader_data["dataloader"]))
+            if not isinstance(dataloader_data["ratio"], int):
+                raise TypeError("Dataset sampling ratios must be integers")
             self.data_ratios.append(dataloader_data["ratio"])
         self.ratio_sum = sum(self.data_ratios)
         self.data_len = sum(len(d) for d in self.dataloader_list)
@@ -178,7 +177,9 @@ class MyDataLoader(DataLoader):
         super().__init__(dataset.build_dataset(), batch_size, collate_fn=_dict_collation_fn, *args, **kw)
 
 
-def get_depth_warp_dataset(dataset_name="dl3dv_long_moge_chunk_81_480p_dav3_hsg", resolution="720", chunk_size=256, **kwargs):
+def get_depth_warp_dataset(
+    dataset_name="lyra2_sample_data", resolution="720", chunk_size=256, **kwargs
+):
     return DepthWarpDataset(dataset_name, resolution, chunk_size, **kwargs)
 
 
@@ -210,6 +211,8 @@ class InfiniteCommonDataset:
         self.dataset = _instantiate_from_config(dataset_cfg)
         self.data_name = data_name
         self.n_data = self.dataset.num_videos()
+        if self.n_data == 0:
+            raise RuntimeError(f"Dataset {data_name!r} contains no matching videos")
         self.t5_embedding_path = t5_embedding_path
 
         if parallel_state.is_initialized():
@@ -223,8 +226,15 @@ class InfiniteCommonDataset:
         else:
             dp_world_size = 1
             dp_group_id = 0
-        self.n_data_per_node = self.n_data // dp_world_size
-        self.data_start_idx = dp_group_id * self.n_data_per_node
+        if self.n_data < dp_world_size:
+            # The two-sample release dataset is intentionally smaller than common
+            # distributed jobs. Reuse it across ranks without changing the normal
+            # sharding behavior for full training datasets.
+            self.n_data_per_node = 1
+            self.data_start_idx = dp_group_id % self.n_data
+        else:
+            self.n_data_per_node = self.n_data // dp_world_size
+            self.data_start_idx = dp_group_id * self.n_data_per_node
 
         self.multiplier = (2000000 * batch_size) // self.n_data_per_node
         self.sample_n_frames = sample_n_frames

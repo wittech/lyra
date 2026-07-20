@@ -15,7 +15,8 @@ import torch.utils.data
 from decord import VideoReader
 from lru import LRU
 
-from lyra_2._src.datasets.base import BaseDataset, DataField
+from lyra_2._src.datasets.base import BaseDataset
+from lyra_2._src.datasets.data_field import DataField
 
 
 class Radym(BaseDataset):
@@ -189,20 +190,37 @@ class Radym(BaseDataset):
                 output_dict[data_field] = intrinsics_torch
 
             elif data_field == DataField.METRIC_DEPTH:
-                depth_zip_handle = self._get_zip_handle(video_idx, self.depth_folder, view_idx)
-                depth_np = []
-                for frame_idx in frame_indices:
-                    frame_name = f"{frame_idx:05d}.exr"
-                    with depth_zip_handle.open(frame_name, "r") as f:
-                        exr_file = OpenEXR.InputFile(f)
-                        exr_dw = exr_file.header()["dataWindow"]
-                        depth_np.append(
-                            np.frombuffer(exr_file.channel("Z"), np.float16).reshape(
-                                exr_dw.max.y - exr_dw.min.y + 1,
-                                exr_dw.max.x - exr_dw.min.x + 1,
-                            )
-                        )
-                depth_np = np.stack(depth_np, axis=0).astype(np.float32)
+                depth_npz_path = data_base_path / self.depth_folder / f"{data_key}.npz"
+                if depth_npz_path.exists():
+                    with np.load(depth_npz_path) as depth_data:
+                        f_idx = np.searchsorted(depth_data["inds"], frame_indices)
+                        assert np.all(depth_data["inds"][f_idx] == frame_indices), "Depth not found"
+                        depth_np = depth_data["data"][f_idx].astype(np.float32)
+                else:
+                    if OpenEXR is None:
+                        raise ImportError("OpenEXR is required to read EXR depth archives")
+                    depth_zip_handle = self._get_zip_handle(video_idx, self.depth_folder, view_idx)
+                    depth_np = []
+                    for frame_idx in frame_indices:
+                        frame_name = f"{frame_idx:05d}.exr"
+                        with depth_zip_handle.open(frame_name, "r") as f:
+                            exr_file = OpenEXR.InputFile(f)
+                            exr_dw = exr_file.header()["dataWindow"]
+                            height = exr_dw.max.y - exr_dw.min.y + 1
+                            width = exr_dw.max.x - exr_dw.min.x + 1
+                            depth_bytes = exr_file.channel("Z")
+                            expected_pixels = height * width
+                            if len(depth_bytes) == expected_pixels * np.dtype(np.float16).itemsize:
+                                depth_dtype = np.float16
+                            elif len(depth_bytes) == expected_pixels * np.dtype(np.float32).itemsize:
+                                depth_dtype = np.float32
+                            else:
+                                raise ValueError(
+                                    f"Unexpected depth buffer size for {frame_name}: "
+                                    f"{len(depth_bytes)} bytes for {height}x{width}"
+                                )
+                            depth_np.append(np.frombuffer(depth_bytes, depth_dtype).reshape(height, width))
+                    depth_np = np.stack(depth_np, axis=0).astype(np.float32)
                 depth_torch = torch.from_numpy(depth_np).contiguous()
                 output_dict[data_field] = depth_torch
 

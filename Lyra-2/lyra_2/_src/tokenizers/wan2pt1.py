@@ -37,6 +37,36 @@ __all__ = [
 CACHE_T = 2
 
 
+def _cache_storage_device(x, previous, storage_device=None):
+    """Choose where a streaming-cache update should live between convolutions."""
+    if storage_device is not None:
+        return torch.device(storage_device)
+    if isinstance(previous, torch.Tensor):
+        return previous.device
+    return x.device
+
+
+def _copy_cache_tail(x, previous, length, storage_device=None):
+    """Copy a cache tail directly to its idle device, avoiding a live GPU clone."""
+    target = _cache_storage_device(x, previous, storage_device)
+    return x[:, :, -length:, :, :].detach().to(device=target, copy=True)
+
+
+def _store_cache_like(previous, value):
+    """Keep encoder streaming cache on its existing storage device."""
+    if isinstance(previous, torch.Tensor):
+        return value.to(previous.device)
+    return value
+
+
+def _release_completed_workspace(x, cache_device):
+    """Release completed CUDA workspaces at layerwise-offload boundaries."""
+    if cache_device is not None and x.device.type == "cuda":
+        torch.cuda.synchronize(x.device)
+        with torch.cuda.device(x.device):
+            torch.cuda.empty_cache()
+
+
 class CausalConv3d(nn.Conv3d):
     """
     Causal 3d convolusion.
@@ -44,16 +74,22 @@ class CausalConv3d(nn.Conv3d):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._padding = (self.padding[2], self.padding[2], self.padding[1], self.padding[1], 2 * self.padding[0], 0)
-        self.padding = (0, 0, 0)
+        # Conv3d can apply symmetric spatial padding itself.  Materialize only
+        # the asymmetric causal time padding; padding H/W with F.pad creates a
+        # large temporary tensor in the high-resolution decoder layers.
+        self._temporal_padding = (0, 0, 0, 0, 2 * self.padding[0], 0)
+        self.padding = (0, self.padding[1], self.padding[2])
 
     def forward(self, x, cache_x=None):
-        padding = list(self._padding)
-        if cache_x is not None and self._padding[4] > 0:
+        padding = list(self._temporal_padding)
+        if cache_x is not None and padding[4] > 0:
             cache_x = cache_x.to(x.device)
+            cached_frames = cache_x.shape[2]
             x = torch.cat([cache_x, x], dim=2)
-            padding[4] -= cache_x.shape[2]
-        x = F.pad(x, padding)
+            del cache_x
+            padding[4] -= cached_frames
+        if padding[4] > 0:
+            x = F.pad(x, padding)
 
         return super().forward(x)
 
@@ -108,7 +144,7 @@ class Resample(nn.Module):
         else:
             self.resample = nn.Identity()
 
-    def forward(self, x, feat_cache=None, feat_idx=[0]):
+    def forward(self, x, feat_cache=None, feat_idx=[0], cache_device=None):
         b, c, t, h, w = x.size()
         if self.mode == "upsample3d":
             if feat_cache is not None:
@@ -117,7 +153,9 @@ class Resample(nn.Module):
                     feat_cache[idx] = "Rep"
                     feat_idx[0] += 1
                 else:
-                    cache_x = x[:, :, -CACHE_T:, :, :].clone()
+                    cache_x = _copy_cache_tail(
+                        x, feat_cache[idx], CACHE_T, cache_device
+                    )
                     if cache_x.shape[2] < 2 and feat_cache[idx] is not None and feat_cache[idx] != "Rep":
                         # cache last frame of last two chunk
                         cache_x = torch.cat(
@@ -129,6 +167,7 @@ class Resample(nn.Module):
                         x = self.time_conv(x)
                     else:
                         x = self.time_conv(x, feat_cache[idx])
+                    _release_completed_workspace(x, cache_device)
                     feat_cache[idx] = cache_x
                     feat_idx[0] += 1
 
@@ -144,11 +183,16 @@ class Resample(nn.Module):
             if feat_cache is not None:
                 idx = feat_idx[0]
                 if feat_cache[idx] is None:
-                    feat_cache[idx] = x.clone()
+                    feat_cache[idx] = _copy_cache_tail(
+                        x, feat_cache[idx], x.shape[2], cache_device
+                    )
                     feat_idx[0] += 1
                 else:
-                    cache_x = x[:, :, -1:, :, :].clone()
-                    x = self.time_conv(torch.cat([feat_cache[idx][:, :, -1:, :, :], x], 2))
+                    cache_x = _copy_cache_tail(
+                        x, feat_cache[idx], 1, cache_device
+                    )
+                    x = self.time_conv(torch.cat([feat_cache[idx][:, :, -1:, :, :].to(x.device), x], 2))
+                    _release_completed_workspace(x, cache_device)
                     feat_cache[idx] = cache_x
                     feat_idx[0] += 1
         return x
@@ -195,12 +239,16 @@ class ResidualBlock(nn.Module):
         )
         self.shortcut = CausalConv3d(in_dim, out_dim, 1) if in_dim != out_dim else nn.Identity()
 
-    def forward(self, x, feat_cache=None, feat_idx=[0]):
+    def forward(self, x, feat_cache=None, feat_idx=[0], cache_device=None):
         h = self.shortcut(x)
+        if not isinstance(self.shortcut, nn.Identity):
+            _release_completed_workspace(h, cache_device)
         for layer in self.residual:
             if isinstance(layer, CausalConv3d) and feat_cache is not None:
                 idx = feat_idx[0]
-                cache_x = x[:, :, -CACHE_T:, :, :].clone()
+                cache_x = _copy_cache_tail(
+                    x, feat_cache[idx], CACHE_T, cache_device
+                )
                 if cache_x.shape[2] < 2 and feat_cache[idx] is not None:
                     # cache last frame of last two chunk
                     cache_x = torch.cat(
@@ -211,6 +259,8 @@ class ResidualBlock(nn.Module):
                 feat_idx[0] += 1
             else:
                 x = layer(x)
+            if isinstance(layer, CausalConv3d):
+                _release_completed_workspace(x, cache_device)
         return x + h
 
 
@@ -314,7 +364,7 @@ class Encoder3d(nn.Module):
                 # cache last frame of last two chunk
                 cache_x = torch.cat([feat_cache[idx][:, :, -1, :, :].unsqueeze(2).to(cache_x.device), cache_x], dim=2)
             x = self.conv1(x, feat_cache[idx])
-            feat_cache[idx] = cache_x
+            feat_cache[idx] = _store_cache_like(feat_cache[idx], cache_x)
             feat_idx[0] += 1
         else:
             x = self.conv1(x)
@@ -344,7 +394,7 @@ class Encoder3d(nn.Module):
                         [feat_cache[idx][:, :, -1, :, :].unsqueeze(2).to(cache_x.device), cache_x], dim=2
                     )
                 x = layer(x, feat_cache[idx])
-                feat_cache[idx] = cache_x
+                feat_cache[idx] = _store_cache_like(feat_cache[idx], cache_x)
                 feat_idx[0] += 1
             else:
                 x = layer(x)
@@ -405,48 +455,94 @@ class Decoder3d(nn.Module):
         self.head = nn.Sequential(RMS_norm(out_dim, images=False), nn.SiLU(), CausalConv3d(out_dim, 3, 3, padding=1))
 
     def forward(self, x, feat_cache=None, feat_idx=[0]):
+        layerwise_offload = bool(getattr(self, "layerwise_offload", False))
+        cache_device = torch.device("cpu") if layerwise_offload else None
+
+        def stage(layer):
+            if layerwise_offload:
+                layer.to(x.device)
+
+        def unstage(layer):
+            if layerwise_offload:
+                execution_device = x.device
+                if execution_device.type == "cuda":
+                    # Finish the current Conv3D before releasing its weights and
+                    # workspace.  This prevents pending workspaces from several
+                    # staged layers accumulating in the caching allocator.
+                    torch.cuda.synchronize(execution_device)
+                layer.to("cpu")
+                if execution_device.type == "cuda":
+                    # Release cached blocks on the decoder GPU (which may not be
+                    # the process's current/default CUDA device).
+                    with torch.cuda.device(execution_device):
+                        torch.cuda.empty_cache()
+
         # conv1
-        if feat_cache is not None:
-            idx = feat_idx[0]
-            cache_x = x[:, :, -CACHE_T:, :, :].clone()
-            if cache_x.shape[2] < 2 and feat_cache[idx] is not None:
-                # cache last frame of last two chunk
-                cache_x = torch.cat([feat_cache[idx][:, :, -1, :, :].unsqueeze(2).to(cache_x.device), cache_x], dim=2)
-            x = self.conv1(x, feat_cache[idx])
-            feat_cache[idx] = cache_x
-            feat_idx[0] += 1
-        else:
-            x = self.conv1(x)
-
-        # middle
-        for layer in self.middle:
-            if isinstance(layer, ResidualBlock) and feat_cache is not None:
-                x = layer(x, feat_cache, feat_idx)
-            else:
-                x = layer(x)
-
-        # upsamples
-        for layer in self.upsamples:
+        stage(self.conv1)
+        try:
             if feat_cache is not None:
-                x = layer(x, feat_cache, feat_idx)
-            else:
-                x = layer(x)
-
-        # head
-        for layer in self.head:
-            if isinstance(layer, CausalConv3d) and feat_cache is not None:
                 idx = feat_idx[0]
-                cache_x = x[:, :, -CACHE_T:, :, :].clone()
+                cache_x = _copy_cache_tail(
+                    x, feat_cache[idx], CACHE_T, cache_device
+                )
                 if cache_x.shape[2] < 2 and feat_cache[idx] is not None:
                     # cache last frame of last two chunk
-                    cache_x = torch.cat(
-                        [feat_cache[idx][:, :, -1, :, :].unsqueeze(2).to(cache_x.device), cache_x], dim=2
-                    )
-                x = layer(x, feat_cache[idx])
+                    cache_x = torch.cat([feat_cache[idx][:, :, -1, :, :].unsqueeze(2).to(cache_x.device), cache_x], dim=2)
+                x = self.conv1(x, feat_cache[idx])
                 feat_cache[idx] = cache_x
                 feat_idx[0] += 1
             else:
-                x = layer(x)
+                x = self.conv1(x)
+        finally:
+            unstage(self.conv1)
+
+        # middle
+        for layer in self.middle:
+            stage(layer)
+            try:
+                if isinstance(layer, ResidualBlock) and feat_cache is not None:
+                    x = layer(
+                        x, feat_cache, feat_idx, cache_device=cache_device
+                    )
+                else:
+                    x = layer(x)
+            finally:
+                unstage(layer)
+
+        # upsamples
+        for layer in self.upsamples:
+            stage(layer)
+            try:
+                if feat_cache is not None:
+                    x = layer(
+                        x, feat_cache, feat_idx, cache_device=cache_device
+                    )
+                else:
+                    x = layer(x)
+            finally:
+                unstage(layer)
+
+        # head
+        for layer in self.head:
+            stage(layer)
+            try:
+                if isinstance(layer, CausalConv3d) and feat_cache is not None:
+                    idx = feat_idx[0]
+                    cache_x = _copy_cache_tail(
+                        x, feat_cache[idx], CACHE_T, cache_device
+                    )
+                    if cache_x.shape[2] < 2 and feat_cache[idx] is not None:
+                        # cache last frame of last two chunk
+                        cache_x = torch.cat(
+                            [feat_cache[idx][:, :, -1, :, :].unsqueeze(2).to(cache_x.device), cache_x], dim=2
+                        )
+                    x = layer(x, feat_cache[idx])
+                    feat_cache[idx] = cache_x
+                    feat_idx[0] += 1
+                else:
+                    x = layer(x)
+            finally:
+                unstage(layer)
         return x
 
 
