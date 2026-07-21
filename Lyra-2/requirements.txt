@@ -67,11 +67,14 @@ psutil==7.0.0
 loguru==0.7.3
 rich==14.0.0
 matplotlib==3.10.7
+tensorboard==2.19.0
 
 # Infrastructure
 fvcore==0.1.5.post20221221
 iopath==0.1.10
 huggingface-hub==0.35.3
+fastapi[standard]==0.136.3
+httpx==0.28.1
 
 # Inference extras (moved from INSTALL.md step 7)
 pyquaternion

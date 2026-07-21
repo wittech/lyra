@@ -21,6 +21,9 @@ from lyra_2._src.tokenizers.wan2pt1 import (
 )
 
 
+Wan2pt1VAEConfig.vae_pth = "./checkpoints/vae/vae.pth"
+
+
 def register_tokenizer():
     cs = ConfigStore.instance()
     cs.store(group="tokenizer", package="model.config.tokenizer", name="wan2pt1_tokenizer", node=Wan2pt1VAEConfig)

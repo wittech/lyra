@@ -690,6 +690,7 @@ class Lyra2Model(WANDiffusionModel):
         x0_pred = xt - sigma_t * flow_pred
         return x0_pred.to(original_dtype)
 
+    @torch.no_grad()
     def inference_dmd(
         self,
         history_latents,
@@ -1096,14 +1097,14 @@ class Lyra2Model(WANDiffusionModel):
             mean_c = vae_wrap.scale[0]
             inv_std_c = vae_wrap.scale[1]
             if torch.is_tensor(mean_c):
-                mu = (mu - mean_c.view(1, vae_core.z_dim, 1, 1, 1).type_as(mu)) * inv_std_c.view(1, vae_core.z_dim, 1, 1, 1).type_as(mu)
+                mu = (mu - mean_c.view(1, vae_core.z_dim, 1, 1, 1).to(mu)) * inv_std_c.view(1, vae_core.z_dim, 1, 1, 1).to(mu)
             else:
                 mu = (mu - mean_c) * inv_std_c
             # Per-frame normalization
             if int(mu.shape[2]) == 1:
-                latents = (mu - vae_wrap.img_mean.type_as(mu)) / vae_wrap.img_std.type_as(mu)
+                latents = (mu - vae_wrap.img_mean.to(mu)) / vae_wrap.img_std.to(mu)
             else:
-                latents = (mu - vae_wrap.video_mean[:, :, :1].type_as(mu)) / vae_wrap.video_std[:, :, :1].type_as(mu)
+                latents = (mu - vae_wrap.video_mean[:, :, :1].to(mu)) / vae_wrap.video_std[:, :, :1].to(mu)
         return latents
 
     @torch.no_grad()
@@ -2846,5 +2847,3 @@ class Sparse3DCache:
 
         top_ids_reversed = top_ids[::-1]
         return [(self._latent_indices[i], self._frame_ids[i]) for i in top_ids_reversed]
-
-

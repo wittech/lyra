@@ -255,7 +255,19 @@ class TextAttrEmptyStringDrop(AbstractEmbModel):
                     "Text dropout requires lyra_2._src.datasets.data_sources.item_datasets_for_validation "
                     "which is not available in this installation."
                 )
-            self.empty_prompt_data = easy_io.load(get_itemdataset_option_local("empty_string_umt5").path)
+            empty_prompt_data = easy_io.load(get_itemdataset_option_local("empty_string_umt5").path)
+            if isinstance(empty_prompt_data, dict):
+                try:
+                    empty_prompt_data = empty_prompt_data["t5_text_embeddings"]
+                except KeyError as error:
+                    raise ValueError(
+                        "The empty-prompt checkpoint must contain 't5_text_embeddings'"
+                    ) from error
+            if not isinstance(empty_prompt_data, torch.Tensor):
+                raise TypeError(
+                    f"Expected an empty-prompt tensor, got {type(empty_prompt_data).__name__}"
+                )
+            self.empty_prompt_data = empty_prompt_data
 
         B = in_tensor.shape[0]  # batch size
         # Create dropout mask: 1 -> keep in_tensor, 0 -> use empty_prompt_data
@@ -472,5 +484,4 @@ class GeneralConditioner(nn.Module, ABC):
         un_condition: Any = self(data_batch_neg_prompt, override_dropout_rate=uncond_dropout_rates)
 
         return condition, un_condition
-
 
